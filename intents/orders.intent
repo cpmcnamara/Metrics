@@ -1,0 +1,174 @@
+# ── Sources ──────────────────────────────────────────
+
+source orders
+  table ref('fct_orders')
+  time order_date day
+
+  entity order_id primary
+  entity customer_id foreign
+
+  dimension order_status categorical
+  dimension customer_region categorical
+  dimension customer_name categorical
+
+  measure order_revenue sum(order_total)
+  measure order_count count(order_id)
+  measure average_order_value average(order_total)
+  measure total_items_sold sum(total_items)
+  measure completed_orders sum(is_completed_order)
+  measure returned_orders sum(is_returned_order)
+  measure max_order_value max(order_total)
+  measure min_order_value min(order_total)
+
+source order_items
+  table ref('fct_order_items')
+  time order_date day
+
+  entity order_item_id primary
+  entity order_id foreign
+  entity product_id foreign
+  entity customer_id foreign
+
+  dimension order_status categorical
+  dimension product_name categorical
+  dimension product_category categorical
+  dimension customer_name categorical
+  dimension customer_region categorical
+
+  measure item_revenue sum(item_total)
+  measure items_sold sum(quantity)
+  measure avg_item_price average(unit_price)
+  measure order_item_count count(order_item_id)
+
+# ── Aliases ──────────────────────────────────────────
+
+alias month = metric_time__month
+alias quarter = metric_time__quarter
+alias week = metric_time__week
+alias day = metric_time__day
+alias year = metric_time__year
+alias region = order_id__customer_region
+alias customer = order_id__customer_name
+alias status = order_id__order_status
+alias category = order_item_id__product_category
+alias product = order_item_id__product_name
+
+# ── Metrics ──────────────────────────────────────────
+
+metric total_revenue
+  description "Total revenue across all orders"
+  also called "sales", "income", "earnings", "money made", "how much did we make"
+  from orders.order_revenue
+  type simple
+
+metric total_order_count
+  description "Total number of orders placed"
+  also called "order volume", "number of orders", "how many orders", "orders placed"
+  from orders.order_count
+  type simple
+
+metric avg_order_value
+  description "Average value per order"
+  also called "AOV", "basket size", "average purchase", "average basket", "typical order"
+  from orders.average_order_value
+  type simple
+
+metric total_items_sold
+  description "Total quantity of items sold"
+  also called "units sold", "items shipped", "volume sold", "how much stuff did we sell"
+  from orders.total_items_sold
+  type simple
+
+metric total_completed_orders
+  description "Number of orders successfully fulfilled"
+  also called "fulfilled orders", "successful orders", "finished orders"
+  from orders.completed_orders
+  type simple
+
+metric total_returned_orders
+  description "Number of orders returned by customers"
+  also called "returns", "refunds", "orders sent back", "return count"
+  from orders.returned_orders
+  type simple
+
+metric order_return_rate
+  description "Percentage of orders that were returned"
+  also called "return rate", "refund rate", "return percentage", "how often returned"
+  formula total_returned_orders / total_order_count
+  type derived
+
+metric revenue_per_item
+  description "Average revenue generated per item sold"
+  also called "per item revenue", "revenue per unit", "dollars per item"
+  formula total_revenue / total_items_sold
+  type derived
+
+metric cumulative_revenue
+  description "Running total of revenue over all time"
+  also called "running total", "revenue to date", "accumulated revenue", "cumulative sales"
+  from orders.order_revenue
+  type cumulative
+
+metric trailing_7d_revenue
+  description "Rolling 7-day revenue window"
+  also called "weekly rolling", "7-day revenue", "trailing week revenue", "last 7 days"
+  from orders.order_revenue
+  type cumulative
+  window 7 days
+
+# ── Intents ──────────────────────────────────────────
+
+intent "How is the business doing?"
+  also asked "business overview", "executive summary", "how are we doing", "give me the numbers"
+  show total_revenue, total_order_count, avg_order_value
+  by month
+  default
+
+intent "What's our return problem?"
+  also asked "return issues", "why are returns high", "refund analysis", "return trouble"
+  show total_returned_orders, order_return_rate, total_revenue
+  by region, month
+  where status = returned
+  reference "Return Policy" from docs/policies/returns.md
+  context "Return rate above 15% triggers executive review"
+  context "West region has historically higher returns due to shipping damage"
+
+intent "Who are our best customers?"
+  also asked "top customers", "customer ranking", "biggest buyers", "VIPs", "whales"
+  show total_revenue, total_order_count
+  by customer
+  sorted by total_revenue desc
+  limit 20
+
+intent "What's selling?"
+  also asked "product performance", "category breakdown", "what products sell", "best sellers"
+  show total_items_sold, total_revenue, revenue_per_item
+  by category, month
+
+intent "How is revenue trending?"
+  also asked "revenue trend", "revenue over time", "growth", "trajectory", "are we growing"
+  show total_revenue, cumulative_revenue, trailing_7d_revenue
+  by month
+  context "Board expects 10% QoQ growth"
+
+intent "How does each region perform?"
+  also asked "regional breakdown", "geography", "regional performance", "where do we sell"
+  show total_revenue, total_order_count
+  by region, month
+
+# ── Groups ───────────────────────────────────────────
+
+group "Executive"
+  includes
+    "How is the business doing?"
+    "How is revenue trending?"
+
+group "Operations"
+  includes
+    "What's our return problem?"
+    "How does each region perform?"
+
+group "Product & Sales"
+  includes
+    "What's selling?"
+    "Who are our best customers?"
