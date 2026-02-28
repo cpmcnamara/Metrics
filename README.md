@@ -2,7 +2,7 @@
 
 A local, open-source MetricFlow (dbt) testing environment using DuckDB. No external database or dbt Cloud required.
 
-Includes a **Streamlit dashboard**, a **"chat with your data" interface**, and **export utilities** to demonstrate real-world use cases.
+Includes a **Streamlit dashboard**, a **"chat with your data" interface**, **data product catalog**, and **export utilities** to demonstrate real-world use cases.
 
 ## Overview
 
@@ -84,7 +84,40 @@ python apps/export_metrics.py --metrics total_revenue,total_order_count --group-
 python apps/export_metrics.py --metrics total_revenue --group-by order_id__customer_region --format parquet -o revenue.parquet
 ```
 
-### 4. Saved Queries
+### 4. Data Product Catalog (`make catalog`)
+
+Browse, discover, and inspect data products — the governed, contractual units of
+analytics that bundle metrics, intents, quality contracts, and SLOs.
+
+```bash
+streamlit run apps/data_product_server.py
+```
+
+Three data products are defined in `intents/orders.intent`:
+
+| Product | Domain | Tier | Metrics | Schedule |
+|---------|--------|------|---------|----------|
+| Revenue Analytics | finance | gold | 4 | daily 06:00 UTC |
+| Order Operations | operations | silver | 4 | hourly |
+| Product Intelligence | product | silver | 2 | daily 08:00 UTC |
+
+Each product carries:
+- **Quality contracts** — freshness, completeness, uniqueness
+- **SLOs** — availability and query latency targets
+- **Output ports** — materialized tables, export formats, schedules
+- **Dependencies** — composable products that build on each other
+
+Compile data product artifacts:
+
+```bash
+# Product manifests, data contracts, and catalog
+make compile-products
+
+# Everything (MetricFlow YAML + LLM context + ontology + products)
+make compile-all
+```
+
+### 5. Saved Queries
 
 Pre-defined, reusable query configurations in `models/marts/saved_queries.yml`:
 - `monthly_revenue_overview` - Executive-level monthly KPIs
@@ -92,7 +125,7 @@ Pre-defined, reusable query configurations in `models/marts/saved_queries.yml`:
 - `product_category_sales` - Product category trends
 - `order_quality` - Return rate and completion metrics
 
-### 5. CLI Queries
+### 6. CLI Queries
 
 ```bash
 source venv/bin/activate
@@ -128,25 +161,38 @@ mf validate-configs
 │   ├── raw_products.csv
 │   ├── raw_orders.csv
 │   └── raw_order_items.csv
+├── intents/
+│   └── orders.intent            # Intent DSL: sources, metrics, intents, products
 ├── models/
 │   ├── staging/                 # Staging models (views)
 │   │   ├── stg_customers.sql
 │   │   ├── stg_products.sql
 │   │   ├── stg_orders.sql
 │   │   └── stg_order_items.sql
-│   └── marts/                   # Mart models + semantic layer
-│       ├── fct_orders.sql
-│       ├── fct_order_items.sql
-│       ├── metricflow_time_spine.sql
-│       ├── _models.yml              # Time spine config
-│       ├── sem_fct_orders.yml       # Semantic model: orders
-│       ├── sem_fct_order_items.yml  # Semantic model: order items
-│       ├── metrics.yml              # Metric definitions
-│       └── saved_queries.yml        # Pre-defined queries
-└── apps/
-    ├── dashboard.py             # Streamlit dashboard
-    ├── chat_with_data.py        # Natural language query interface
-    └── export_metrics.py        # CLI export utility
+│   ├── marts/                   # Mart models + semantic layer
+│   │   ├── fct_orders.sql
+│   │   ├── fct_order_items.sql
+│   │   ├── metricflow_time_spine.sql
+│   │   ├── _models.yml              # Time spine config
+│   │   ├── sem_fct_orders.yml       # Semantic model: orders
+│   │   ├── sem_fct_order_items.yml  # Semantic model: order items
+│   │   ├── metrics.yml              # Metric definitions
+│   │   └── saved_queries.yml        # Pre-defined queries
+│   └── products/                # Data product materialization
+│       ├── _products.yml            # Product model metadata
+│       ├── dp_revenue_analytics.sql
+│       ├── dp_order_operations.sql
+│       └── dp_product_intelligence.sql
+├── apps/
+│   ├── dashboard.py             # Streamlit dashboard
+│   ├── chat_with_data.py        # Natural language query interface
+│   ├── export_metrics.py        # CLI export utility
+│   ├── data_product_server.py   # Data product catalog UI
+│   ├── intent_parser.py         # Intent DSL parser
+│   ├── intent_compiler.py       # Compiles .intent → manifests/contracts/YAML
+│   └── query_engine.py          # Hybrid intent + LLM query router
+└── docs/
+    └── intent-dsl-guide.md      # Complete Intent DSL reference
 ```
 
 ## Available Metrics
@@ -164,12 +210,55 @@ mf validate-configs
 | `cumulative_revenue` | Cumulative | Running total of revenue |
 | `trailing_7d_revenue` | Cumulative | Rolling 7-day revenue |
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   Intent DSL (.intent files)                    │
+│          Single authoring surface for the entire stack          │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ parse & compile
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+        ▼                  ▼                  ▼
+  MetricFlow YAML    LLM Context JSON    Ontology Graph
+  (metrics + models) (chat training)     (relationships)
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           │
+        ┌──────────────────▼──────────────────┐
+        │       MetricFlow Semantic Layer      │
+        │     governed metric definitions      │
+        └──────────────────┬──────────────────┘
+                           │
+        ┌──────────────────▼──────────────────┐
+        │          Data Products               │
+        │  domain-owned, contractual, trusted  │
+        ├──────────────────────────────────────┤
+        │ Manifests │ Contracts │ Catalog      │
+        │ SLOs      │ Output    │ Dependencies │
+        └──────────────────┬──────────────────┘
+                           │
+        ┌──────────────────▼──────────────────┐
+        │   Consumption Layer (4 modes)        │
+        ├──────────────────────────────────────┤
+        │ 1. Dashboard      (Streamlit)        │
+        │ 2. Chat           (NL → Query)       │
+        │ 3. Export          (CSV/JSON/Parquet) │
+        │ 4. Product Catalog (Discovery + API) │
+        └──────────────────────────────────────┘
+```
+
 ## Key Concepts Demonstrated
 
 - **Semantic Models** - Entities, dimensions, and measures on fact tables
 - **Simple Metrics** - Direct references to a single measure
 - **Derived Metrics** - Combine multiple metrics with expressions
 - **Cumulative Metrics** - Running totals and rolling windows
+- **Data Products** - Domain-owned, self-describing, contractual units of analytics
+- **Quality Contracts** - Freshness, completeness, and uniqueness guarantees
+- **SLOs** - Availability and latency targets per product
+- **Product Catalog** - Discoverable registry with tier, domain, and tag filtering
 - **Saved Queries** - Reusable, governed query definitions
 - **Time Spine** - Required for cumulative and time-based metrics
 - **Dashboard Integration** - Streamlit reading from the semantic layer

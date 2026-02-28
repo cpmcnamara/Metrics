@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from apps.intent_parser import IntentFile, Metric, Source
+from apps.intent_parser import IntentFile, Metric, Product, Source
 
 
 # ── Target 1: MetricFlow YAML ────────────────────────────────────────────────
@@ -363,7 +363,366 @@ def compile_ontology(intent_file: IntentFile) -> dict:
             ).strip('_')
             add_edge(group_id, intent_id, "contains")
 
+    # Products
+    compile_products_into_ontology(intent_file, nodes, edges, seen_nodes)
+
     return {"nodes": nodes, "edges": edges}
+
+
+# ── Target 4: Data Product Manifests ─────────────────────────────────────────
+
+
+def compile_product_manifest(product: Product, intent_file: IntentFile) -> dict:
+    """
+    Compile a Product into a self-describing manifest.
+
+    The manifest is the single document that makes a data product discoverable,
+    addressable, and trustworthy. It follows the Data Mesh principle that every
+    data product must be self-describing.
+    """
+    import re
+
+    slug = re.sub(r'[^a-z0-9]+', '_', product.name.lower()).strip('_')
+
+    # Resolve the metrics this product exposes
+    exposed_metrics = []
+    for m_name in product.metric_names:
+        metric = intent_file.get_metric(m_name)
+        if metric:
+            exposed_metrics.append({
+                "name": metric.name,
+                "description": metric.description,
+                "type": metric.metric_type,
+                "synonyms": metric.synonyms,
+            })
+
+    # Resolve the intents (business questions) this product answers
+    answered_intents = []
+    for intent_name in product.intent_names:
+        for intent in intent_file.intents:
+            if intent.question == intent_name:
+                answered_intents.append({
+                    "question": intent.question,
+                    "also_asked": intent.also_asked,
+                    "metrics": intent.metrics,
+                    "dimensions": [
+                        intent_file.resolve_alias(d)
+                        for d in intent.dimensions
+                    ],
+                })
+                break
+
+    # Build contract
+    contracts = []
+    for rule in product.contracts:
+        contracts.append({
+            "check": rule.check,
+            "operator": rule.operator,
+            "threshold": rule.value,
+        })
+
+    # Build SLOs
+    slos = []
+    for slo in product.slos:
+        slos.append({"name": slo.name, "target": slo.value})
+
+    # Build output port
+    output_port = {}
+    if product.output.table:
+        output_port["table"] = product.output.table
+    if product.output.formats:
+        output_port["formats"] = product.output.formats
+    if product.output.schedule:
+        output_port["schedule"] = product.output.schedule
+
+    return {
+        "product": {
+            "id": slug,
+            "name": product.name,
+            "description": product.description,
+            "owner": product.owner,
+            "domain": product.domain,
+            "tier": product.tier,
+            "tags": product.tags,
+            "depends_on": product.depends_on,
+        },
+        "schema": {
+            "metrics": exposed_metrics,
+            "intents": answered_intents,
+        },
+        "quality": {
+            "contracts": contracts,
+            "slos": slos,
+        },
+        "output": output_port,
+    }
+
+
+def compile_data_contract(product: Product, intent_file: IntentFile) -> dict:
+    """
+    Compile a Product into a data contract (YAML-compatible dict).
+
+    Data contracts are the interface agreement between a data product and its
+    consumers. They specify what the product promises: schema, quality, freshness,
+    and availability. This follows the "data contracts" pattern from Andrew Jones.
+    """
+    import re
+
+    slug = re.sub(r'[^a-z0-9]+', '_', product.name.lower()).strip('_')
+
+    # Build the schema section — which columns/metrics are guaranteed
+    schema_fields = []
+    for m_name in product.metric_names:
+        metric = intent_file.get_metric(m_name)
+        if metric:
+            schema_fields.append({
+                "name": metric.name,
+                "type": "metric",
+                "metric_type": metric.metric_type,
+                "description": metric.description,
+            })
+
+    # Collect all dimensions used by the product's intents
+    dimensions_used = set()
+    for intent_name in product.intent_names:
+        for intent in intent_file.intents:
+            if intent.question == intent_name:
+                for d in intent.dimensions:
+                    dimensions_used.add(intent_file.resolve_alias(d))
+                break
+
+    for dim in sorted(dimensions_used):
+        schema_fields.append({
+            "name": dim,
+            "type": "dimension",
+        })
+
+    # Quality checks
+    quality = []
+    for rule in product.contracts:
+        quality.append({
+            "type": rule.check,
+            "operator": rule.operator,
+            "value": rule.value,
+        })
+
+    return {
+        "dataContractSpecification": "0.9.3",
+        "id": f"urn:dataproduct:{slug}",
+        "info": {
+            "title": product.name,
+            "version": "1.0.0",
+            "description": product.description,
+            "owner": product.owner,
+            "domain": product.domain,
+        },
+        "schema": schema_fields,
+        "quality": quality,
+        "slos": [{"name": s.name, "target": s.value} for s in product.slos],
+        "tags": product.tags,
+    }
+
+
+def compile_product_catalog(intent_file: IntentFile) -> dict:
+    """
+    Compile all Products into a unified catalog for discovery.
+
+    The catalog is the "marketplace" view — a single JSON that lists every
+    data product with enough metadata for consumers to find, evaluate, and
+    request access to the products they need.
+    """
+    catalog_entries = []
+
+    for product in intent_file.products:
+        entry = {
+            "name": product.name,
+            "description": product.description,
+            "owner": product.owner,
+            "domain": product.domain,
+            "tier": product.tier,
+            "tags": product.tags,
+            "metrics_count": len(product.metric_names),
+            "metrics": product.metric_names,
+            "intents_count": len(product.intent_names),
+            "intents": product.intent_names,
+            "has_contract": len(product.contracts) > 0,
+            "has_slos": len(product.slos) > 0,
+            "output_table": product.output.table,
+            "output_formats": product.output.formats,
+            "schedule": product.output.schedule,
+            "depends_on": product.depends_on,
+        }
+        catalog_entries.append(entry)
+
+    # Build a dependency graph for the catalog
+    dep_edges = []
+    for product in intent_file.products:
+        for dep in product.depends_on:
+            dep_edges.append({"from": product.name, "to": dep})
+
+    return {
+        "products": catalog_entries,
+        "dependency_graph": dep_edges,
+        "summary": {
+            "total_products": len(intent_file.products),
+            "by_domain": _count_by(intent_file.products, lambda p: p.domain),
+            "by_tier": _count_by(intent_file.products, lambda p: p.tier),
+        },
+    }
+
+
+def _count_by(products: list[Product], key_fn) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for p in products:
+        k = key_fn(p)
+        counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+def compile_product_dbt_model(product: Product, intent_file: IntentFile) -> str:
+    """
+    Generate a dbt SQL model that materializes a data product as a table.
+
+    This creates a governed, queryable output table for the product by joining
+    the metrics the product exposes with the dimensions its intents use.
+    """
+    if not product.output.table:
+        return ""
+
+    # Find which sources the product's metrics come from
+    source_tables = set()
+    for m_name in product.metric_names:
+        metric = intent_file.get_metric(m_name)
+        if metric and metric.source_ref:
+            source_name = metric.source_ref.split(".")[0]
+            for s in intent_file.sources:
+                if s.name == source_name:
+                    source_tables.add((s.name, s.table))
+
+    if not source_tables:
+        return ""
+
+    # Build the SQL as a simple select from the primary source
+    primary_source_name, primary_table = next(iter(source_tables))
+
+    # Collect all measure columns the product needs
+    measures = []
+    for m_name in product.metric_names:
+        metric = intent_file.get_metric(m_name)
+        if metric and metric.source_ref:
+            source_name, measure_name = metric.source_ref.split(".")
+            for s in intent_file.sources:
+                if s.name == source_name:
+                    for m in s.measures:
+                        if m.name == measure_name:
+                            measures.append(m)
+
+    # Collect dimensions used by the product's intents
+    dims_used = set()
+    for intent_name in product.intent_names:
+        for intent in intent_file.intents:
+            if intent.question == intent_name:
+                for d in intent.dimensions:
+                    dims_used.add(d)
+                break
+
+    # Resolve the primary source for column references
+    primary_source = None
+    for s in intent_file.sources:
+        if s.name == primary_source_name:
+            primary_source = s
+            break
+
+    if not primary_source:
+        return ""
+
+    # Build column list
+    columns = [primary_source.time_column]
+    for dim_alias in dims_used:
+        resolved = intent_file.resolve_alias(dim_alias)
+        # Map MetricFlow dim paths back to column names
+        if resolved.startswith("metric_time__"):
+            continue  # time column already included
+        # Extract the column name from the path (e.g., "order_id__customer_region" -> "customer_region")
+        parts = resolved.split("__")
+        col_name = parts[-1] if len(parts) > 1 else parts[0]
+        if col_name not in columns:
+            columns.append(col_name)
+
+    # Add measure expressions
+    measure_selects = []
+    for m in measures:
+        measure_selects.append(f"  {m.agg}({m.column}) as {m.name}")
+
+    group_cols = ", ".join(columns)
+    select_cols = "\n".join(f"  {c}," for c in columns)
+    agg_cols = ",\n".join(measure_selects)
+
+    # Extract the ref name from "ref('fct_orders')"
+    import re
+    ref_match = re.search(r"ref\('([^']+)'\)", primary_table)
+    ref_name = ref_match.group(1) if ref_match else primary_source_name
+
+    sql = f"""-- Data product: {product.name}
+-- Owner: {product.owner} | Domain: {product.domain} | Tier: {product.tier}
+-- Schedule: {product.output.schedule or 'on-demand'}
+
+select
+{select_cols}
+{agg_cols}
+from {{{{ ref('{ref_name}') }}}}
+group by {group_cols}
+order by {primary_source.time_column}
+"""
+    return sql
+
+
+# ── Ontology: product nodes/edges ────────────────────────────────────────────
+
+
+def compile_products_into_ontology(intent_file: IntentFile, nodes: list, edges: list, seen_nodes: set):
+    """Add product nodes and edges to an existing ontology graph."""
+    import re
+
+    def add_node(node_id: str, node_type: str, label: str, **props):
+        if node_id not in seen_nodes:
+            node = {"id": node_id, "type": node_type, "label": label}
+            node.update(props)
+            nodes.append(node)
+            seen_nodes.add(node_id)
+
+    def add_edge(from_id: str, to_id: str, relation: str):
+        edges.append({"from": from_id, "to": to_id, "relation": relation})
+
+    for product in intent_file.products:
+        product_id = "product:" + re.sub(
+            r'[^a-z0-9]+', '_', product.name.lower(),
+        ).strip('_')
+        add_node(
+            product_id, "product", product.name,
+            owner=product.owner,
+            domain=product.domain,
+            tier=product.tier,
+            tags=product.tags,
+        )
+
+        # Product -> metrics
+        for m_name in product.metric_names:
+            add_edge(product_id, f"metric:{m_name}", "exposes")
+
+        # Product -> intents
+        for intent_name in product.intent_names:
+            intent_id = "intent:" + re.sub(
+                r'[^a-z0-9]+', '_', intent_name.lower(),
+            ).strip('_')
+            add_edge(product_id, intent_id, "answers")
+
+        # Product -> dependencies
+        for dep_name in product.depends_on:
+            dep_id = "product:" + re.sub(
+                r'[^a-z0-9]+', '_', dep_name.lower(),
+            ).strip('_')
+            add_edge(product_id, dep_id, "depends_on")
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -376,7 +735,11 @@ def main():
     parser.add_argument("source", help="Path to .intent file or directory")
     parser.add_argument(
         "--target",
-        choices=["metricflow", "llm-context", "ontology", "all", "validate"],
+        choices=[
+            "metricflow", "llm-context", "ontology",
+            "products", "contracts", "catalog", "product-models",
+            "all", "validate",
+        ],
         default="all",
         help="Compilation target",
     )
@@ -406,11 +769,12 @@ def main():
         if not errors:
             print("No errors found.")
         print(f"\nSummary:")
-        print(f"  Sources:  {len(intent_file.sources)}")
-        print(f"  Metrics:  {len(intent_file.metrics)}")
-        print(f"  Intents:  {len(intent_file.intents)}")
-        print(f"  Groups:   {len(intent_file.groups)}")
-        print(f"  Aliases:  {len(intent_file.aliases)}")
+        print(f"  Sources:   {len(intent_file.sources)}")
+        print(f"  Metrics:   {len(intent_file.metrics)}")
+        print(f"  Intents:   {len(intent_file.intents)}")
+        print(f"  Groups:    {len(intent_file.groups)}")
+        print(f"  Products:  {len(intent_file.products)}")
+        print(f"  Aliases:   {len(intent_file.aliases)}")
         return
 
     out = Path(args.output)
@@ -433,6 +797,46 @@ def main():
         graph_path = out / "ontology.json"
         graph_path.write_text(json.dumps(graph, indent=2))
         print(f"  wrote {graph_path}")
+
+    if args.target in ("products", "all"):
+        products_dir = out / "products"
+        products_dir.mkdir(parents=True, exist_ok=True)
+        for product in intent_file.products:
+            manifest = compile_product_manifest(product, intent_file)
+            import re
+            slug = re.sub(r'[^a-z0-9]+', '_', product.name.lower()).strip('_')
+            manifest_path = products_dir / f"{slug}.json"
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+            print(f"  wrote {manifest_path}")
+
+    if args.target in ("contracts", "all"):
+        contracts_dir = out / "contracts"
+        contracts_dir.mkdir(parents=True, exist_ok=True)
+        for product in intent_file.products:
+            contract = compile_data_contract(product, intent_file)
+            import re
+            slug = re.sub(r'[^a-z0-9]+', '_', product.name.lower()).strip('_')
+            contract_path = contracts_dir / f"{slug}_contract.yml"
+            contract_path.write_text(
+                yaml.dump(contract, default_flow_style=False, sort_keys=False),
+            )
+            print(f"  wrote {contract_path}")
+
+    if args.target in ("catalog", "all"):
+        catalog = compile_product_catalog(intent_file)
+        catalog_path = out / "product_catalog.json"
+        catalog_path.write_text(json.dumps(catalog, indent=2))
+        print(f"  wrote {catalog_path}")
+
+    if args.target in ("product-models", "all"):
+        models_dir = out / "product_models"
+        models_dir.mkdir(parents=True, exist_ok=True)
+        for product in intent_file.products:
+            sql = compile_product_dbt_model(product, intent_file)
+            if sql and product.output.table:
+                model_path = models_dir / f"{product.output.table}.sql"
+                model_path.write_text(sql)
+                print(f"  wrote {model_path}")
 
 
 if __name__ == "__main__":

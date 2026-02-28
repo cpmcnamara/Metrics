@@ -78,6 +78,46 @@ class Group:
 
 
 @dataclass
+class ContractRule:
+    """A single quality contract assertion (e.g. freshness < 24h)."""
+    check: str  # "freshness", "completeness", "uniqueness", "not_null", "accepted_values"
+    operator: str  # "<", ">", "=", "in"
+    value: str  # "24h", "99%", "order_id"
+
+
+@dataclass
+class SLORule:
+    """A service-level objective (e.g. availability 99.9%)."""
+    name: str  # "availability", "query_latency", "update_frequency"
+    value: str  # "99.9%", "< 5s"
+
+
+@dataclass
+class OutputPort:
+    """How a data product is consumed."""
+    table: str | None = None
+    formats: list[str] = field(default_factory=list)
+    schedule: str | None = None
+
+
+@dataclass
+class Product:
+    """A data product — the unit of trust, discovery, and consumption."""
+    name: str
+    description: str = ""
+    owner: str = ""
+    domain: str = ""
+    tier: str = "bronze"  # "bronze", "silver", "gold"
+    metric_names: list[str] = field(default_factory=list)
+    intent_names: list[str] = field(default_factory=list)
+    contracts: list[ContractRule] = field(default_factory=list)
+    slos: list[SLORule] = field(default_factory=list)
+    output: OutputPort = field(default_factory=OutputPort)
+    tags: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass
 class IntentFile:
     """The complete parsed result of one or more .intent files."""
     sources: list[Source] = field(default_factory=list)
@@ -85,6 +125,7 @@ class IntentFile:
     metrics: list[Metric] = field(default_factory=list)
     intents: list[Intent] = field(default_factory=list)
     groups: list[Group] = field(default_factory=list)
+    products: list[Product] = field(default_factory=list)
 
     def resolve_alias(self, name: str) -> str:
         """Resolve a dimension shorthand to its full MetricFlow path."""
@@ -95,6 +136,13 @@ class IntentFile:
         for m in self.metrics:
             if m.name == name:
                 return m
+        return None
+
+    def get_product(self, name: str) -> Product | None:
+        """Look up a data product by name."""
+        for p in self.products:
+            if p.name == name:
+                return p
         return None
 
     def validate(self) -> list[str]:
@@ -150,6 +198,51 @@ class IntentFile:
                         f"Group '{group.name}' references intent '{name}' "
                         f"which is not defined"
                     )
+
+        # Check product references
+        product_names = {p.name for p in self.products}
+        for product in self.products:
+            for m in product.metric_names:
+                if m not in metric_names:
+                    errors.append(
+                        f"Product '{product.name}' references metric '{m}' "
+                        f"which is not defined"
+                    )
+            for intent_name in product.intent_names:
+                if intent_name not in intent_questions:
+                    errors.append(
+                        f"Product '{product.name}' references intent "
+                        f"'{intent_name}' which is not defined"
+                    )
+            for dep in product.depends_on:
+                if dep not in product_names:
+                    errors.append(
+                        f"Product '{product.name}' depends on '{dep}' "
+                        f"which is not a defined product"
+                    )
+            # Detect circular dependencies
+            if product.depends_on:
+                visited = set()
+                stack = list(product.depends_on)
+                while stack:
+                    current = stack.pop()
+                    if current == product.name:
+                        errors.append(
+                            f"Product '{product.name}' has a circular dependency"
+                        )
+                        break
+                    if current in visited:
+                        continue
+                    visited.add(current)
+                    dep_product = self.get_product(current)
+                    if dep_product:
+                        stack.extend(dep_product.depends_on)
+            # Validate tier
+            if product.tier not in ("bronze", "silver", "gold"):
+                errors.append(
+                    f"Product '{product.name}' has invalid tier '{product.tier}' "
+                    f"(must be bronze, silver, or gold)"
+                )
 
         return errors
 
@@ -361,6 +454,107 @@ def parse(text: str) -> IntentFile:
             result.groups.append(group)
             continue
 
+        # ── product block ───────────────────────────────────────────
+        if stripped.startswith('product '):
+            quoted = _parse_quoted_list(stripped)
+            product_name = quoted[0] if quoted else stripped.split(None, 1)[1]
+            product = Product(name=product_name)
+            i += 1
+
+            # Track which sub-block we're in
+            sub_block = None  # "metrics", "intents", "contract", "slo", "output"
+
+            while i < len(lines):
+                child = _strip_comment(lines[i]).rstrip()
+                if not child or child.lstrip().startswith('#'):
+                    i += 1
+                    continue
+                indent = len(child) - len(child.lstrip())
+                if indent == 0:
+                    break
+
+                child_stripped = child.strip()
+
+                # Detect sub-block headers (2-space indent direct children)
+                if child_stripped in ('metrics', 'intents', 'contract', 'slo', 'output'):
+                    sub_block = child_stripped
+                    i += 1
+                    continue
+
+                # Top-level product properties
+                if child_stripped.startswith('description '):
+                    quoted_vals = _parse_quoted_list(child_stripped)
+                    product.description = quoted_vals[0] if quoted_vals else child_stripped.split(None, 1)[1]
+                    sub_block = None
+                elif child_stripped.startswith('owner '):
+                    product.owner = child_stripped.split(None, 1)[1]
+                    sub_block = None
+                elif child_stripped.startswith('domain '):
+                    product.domain = child_stripped.split(None, 1)[1]
+                    sub_block = None
+                elif child_stripped.startswith('tier '):
+                    product.tier = child_stripped.split()[1]
+                    sub_block = None
+                elif child_stripped.startswith('tags '):
+                    product.tags = [t.strip() for t in child_stripped.split(None, 1)[1].split(',')]
+                    sub_block = None
+                elif child_stripped.startswith('depends on '):
+                    dep = _parse_quoted_list(child_stripped)
+                    if dep:
+                        product.depends_on.extend(dep)
+                    else:
+                        product.depends_on.append(child_stripped.split(None, 2)[2])
+                    sub_block = None
+
+                # Sub-block content
+                elif sub_block == 'metrics':
+                    # Each line is a metric name
+                    product.metric_names.append(child_stripped)
+                elif sub_block == 'intents':
+                    quoted_names = _parse_quoted_list(child_stripped)
+                    if quoted_names:
+                        product.intent_names.extend(quoted_names)
+                elif sub_block == 'contract':
+                    # Parse: freshness < 24h | completeness > 99% | uniqueness order_id
+                    contract_match = re.match(
+                        r'(\w+)\s*([<>=!]+)\s*(.+)', child_stripped,
+                    )
+                    if contract_match:
+                        product.contracts.append(ContractRule(
+                            check=contract_match.group(1),
+                            operator=contract_match.group(2),
+                            value=contract_match.group(3).strip(),
+                        ))
+                    else:
+                        # Simple form: "uniqueness order_id"
+                        parts = child_stripped.split(None, 1)
+                        if len(parts) == 2:
+                            product.contracts.append(ContractRule(
+                                check=parts[0], operator="=", value=parts[1],
+                            ))
+                elif sub_block == 'slo':
+                    # Parse: availability 99.9% | query_latency < 5s
+                    slo_match = re.match(r'(\w+)\s+(.+)', child_stripped)
+                    if slo_match:
+                        product.slos.append(SLORule(
+                            name=slo_match.group(1),
+                            value=slo_match.group(2).strip(),
+                        ))
+                elif sub_block == 'output':
+                    if child_stripped.startswith('table '):
+                        product.output.table = child_stripped.split()[1]
+                    elif child_stripped.startswith('formats '):
+                        product.output.formats = [
+                            f.strip() for f in child_stripped.split(None, 1)[1].split(',')
+                        ]
+                    elif child_stripped.startswith('schedule '):
+                        product.output.schedule = child_stripped.split(None, 1)[1]
+
+                i += 1
+
+            result.products.append(product)
+            continue
+
         i += 1
 
     return result
@@ -381,4 +575,5 @@ def parse_directory(path: str | Path) -> IntentFile:
         merged.metrics.extend(parsed.metrics)
         merged.intents.extend(parsed.intents)
         merged.groups.extend(parsed.groups)
+        merged.products.extend(parsed.products)
     return merged

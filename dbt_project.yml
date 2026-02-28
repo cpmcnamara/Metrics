@@ -24,3 +24,6 @@ models:
       +materialized: view
     marts:
       +materialized: table
+    products:
+      +materialized: table
+      +tags: ['data-product']

@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: dp_revenue_analytics
+    description: >
+      Data product: Revenue Analytics.
+      Core revenue metrics and trends for the finance domain.
+      Owner: analytics-engineering | Tier: gold
+    config:
+      tags: ['data-product', 'finance', 'gold']
+
+  - name: dp_order_operations
+    description: >
+      Data product: Order Operations.
+      Operational metrics for fulfillment and returns management.
+      Owner: operations-team | Tier: silver
+    config:
+      tags: ['data-product', 'operations', 'silver']
+
+  - name: dp_product_intelligence
+    description: >
+      Data product: Product Intelligence.
+      Product and category performance for merchandising decisions.
+      Owner: product-analytics | Tier: silver
+    config:
+      tags: ['data-product', 'product', 'silver']

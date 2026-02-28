@@ -1,4 +1,4 @@
-.PHONY: setup build seed run test query-all clean help dashboard chat export
+.PHONY: setup build seed run test query-all clean help dashboard chat export catalog compile-products compile-all
 
 ACTIVATE = . venv/bin/activate &&
 DBT = $(ACTIVATE) dbt --profiles-dir .
@@ -67,8 +67,19 @@ chat: build ## Launch chat-with-your-data interface
 export: build ## Export revenue metrics to CSV (example)
 	$(ACTIVATE) python apps/export_metrics.py --metrics total_revenue,total_order_count --group-by metric_time__month --format csv
 
+catalog: build ## Launch data product catalog UI
+	$(ACTIVATE) streamlit run apps/data_product_server.py
+
+compile-products: ## Compile intent files to product manifests and contracts
+	$(ACTIVATE) python -m apps.intent_compiler intents/ --target products -o build
+	$(ACTIVATE) python -m apps.intent_compiler intents/ --target contracts -o build
+	$(ACTIVATE) python -m apps.intent_compiler intents/ --target catalog -o build
+
+compile-all: ## Compile intent files to all targets
+	$(ACTIVATE) python -m apps.intent_compiler intents/ --target all -o build
+
 clean: ## Remove build artifacts
-	rm -rf target/ dbt_packages/ logs/
+	rm -rf target/ dbt_packages/ logs/ build/
 
 full-reset: clean ## Full reset including venv
 	rm -rf venv/

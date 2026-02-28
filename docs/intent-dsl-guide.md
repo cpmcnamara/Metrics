@@ -12,10 +12,14 @@ to measure and why. The compiler generates everything downstream:
 ```
   .intent files (you write these)
        │
-       ├──► MetricFlow YAML   (how to calculate)
-       ├──► LLM context       (how to answer questions)
-       ├──► Ontology graph     (how concepts relate)
-       └──► Documentation      (how humans understand)
+       ├──► MetricFlow YAML       (how to calculate)
+       ├──► LLM context           (how to answer questions)
+       ├──► Ontology graph         (how concepts relate)
+       ├──► Data product manifests (how to discover and trust)
+       ├──► Data contracts         (what consumers are promised)
+       ├──► Product catalog        (how to find what you need)
+       ├──► Product dbt models     (how to materialize)
+       └──► Documentation          (how humans understand)
 ```
 
 ## File Structure
@@ -208,6 +212,143 @@ group "Customer Intelligence"
 
 ---
 
+### 5. `product` — Define a Data Product
+
+A data product is the **unit of trust, discovery, and consumption** in the
+analytics platform. It bundles metrics, intents, quality contracts, SLOs, and
+output ports into a single, self-describing, domain-owned package.
+
+Data products follow Data Mesh principles:
+- **Domain-owned** — each product belongs to a team
+- **Self-describing** — carries its own metadata, schema, and contracts
+- **Discoverable** — registered in a catalog with tags and descriptions
+- **Trustworthy** — enforced quality contracts and SLOs
+- **Composable** — products can depend on other products
+
+```
+product "Revenue Analytics"
+  description "Core revenue metrics and trends for the finance domain"
+  owner analytics-engineering
+  domain finance
+  tier gold
+
+  metrics
+    total_revenue
+    avg_order_value
+    cumulative_revenue
+    trailing_7d_revenue
+
+  intents
+    "How is the business doing?"
+    "How is revenue trending?"
+
+  contract
+    freshness < 24h
+    completeness > 99%
+    uniqueness order_id
+
+  slo
+    availability 99.9%
+    query_latency < 5s
+
+  output
+    table dp_revenue_analytics
+    formats csv, parquet, json_api
+    schedule daily 06:00 UTC
+
+  tags finance, executive, kpi
+```
+
+#### Product with dependencies
+
+Products can declare dependencies on other products, enabling composability:
+
+```
+product "Product Intelligence"
+  description "Product performance for merchandising decisions"
+  owner product-analytics
+  domain product
+  tier silver
+  depends on "Revenue Analytics"
+
+  metrics
+    total_items_sold
+    revenue_per_item
+
+  intents
+    "What's selling?"
+    "Who are our best customers?"
+
+  contract
+    freshness < 24h
+    completeness > 98%
+
+  slo
+    availability 99.0%
+    query_latency < 5s
+
+  output
+    table dp_product_intelligence
+    formats csv, parquet, json_api
+    schedule daily 08:00 UTC
+
+  tags product, merchandising, category
+```
+
+**Syntax:**
+
+```
+product "<name>"
+  description "<text>"
+  owner <team-name>
+  domain <domain-name>
+  tier <gold|silver|bronze>
+  depends on "<product-name>"          # optional, repeatable
+
+  metrics                              # which metrics this product exposes
+    <metric_name>
+    ...
+
+  intents                              # which business questions it answers
+    "<intent question>"
+    ...
+
+  contract                             # quality guarantees
+    freshness < <duration>             # e.g. 24h, 6h, 1h
+    completeness > <percentage>        # e.g. 99%, 99.5%
+    uniqueness <column>                # unique key constraint
+    not_null <column>                  # not-null constraint
+    accepted_values <column> in (a,b)  # value constraints
+
+  slo                                  # service-level objectives
+    availability <percentage>          # e.g. 99.9%
+    query_latency < <duration>         # e.g. 5s, 500ms
+    update_frequency <schedule>        # e.g. hourly, daily
+
+  output                               # how consumers access the product
+    table <table_name>                 # materialized output table
+    formats <fmt1>, <fmt2>, ...        # csv, parquet, json_api
+    schedule <cron or natural>         # daily 06:00 UTC, hourly
+
+  tags <tag1>, <tag2>, ...             # for catalog discovery
+```
+
+**Tier definitions:**
+
+| Tier | Meaning | Typical SLA |
+|------|---------|-------------|
+| **gold** | Mission-critical, executive-facing, governed | 99.9% availability, < 24h freshness |
+| **silver** | Team-level, operational, reliable | 99.5% availability, < 6h freshness |
+| **bronze** | Exploratory, best-effort, developing | 99.0% availability, best-effort freshness |
+
+---
+
+### 6. `group` — Group Intents by Domain
+
+→ *(Moved from section 4)*
+
+---
+
 ## Dimension Shorthands
 
 The DSL supports shorthand names that map to full MetricFlow dimension paths:
@@ -328,7 +469,104 @@ Output:
 }
 ```
 
-### Target 4: Documentation
+### Target 4: Data Product Manifests
+
+Each product compiles to a self-describing JSON manifest containing its metadata,
+schema (metrics + dimensions), quality contracts, SLOs, and output port.
+
+```bash
+intent-compile --target products intents/ -o build/
+```
+
+Output (one file per product in `build/products/`):
+
+```json
+{
+  "product": {
+    "id": "revenue_analytics",
+    "name": "Revenue Analytics",
+    "owner": "analytics-engineering",
+    "domain": "finance",
+    "tier": "gold",
+    "tags": ["finance", "executive", "kpi"],
+    "depends_on": []
+  },
+  "schema": {
+    "metrics": [
+      {"name": "total_revenue", "description": "...", "type": "simple"}
+    ],
+    "intents": [
+      {"question": "How is the business doing?", "metrics": [...]}
+    ]
+  },
+  "quality": {
+    "contracts": [
+      {"check": "freshness", "operator": "<", "threshold": "24h"}
+    ],
+    "slos": [
+      {"name": "availability", "target": "99.9%"}
+    ]
+  },
+  "output": {
+    "table": "dp_revenue_analytics",
+    "formats": ["csv", "parquet", "json_api"],
+    "schedule": "daily 06:00 UTC"
+  }
+}
+```
+
+### Target 5: Data Contracts
+
+Each product compiles to a data contract YAML following the
+[Data Contract Specification](https://datacontract.com/) pattern:
+
+```bash
+intent-compile --target contracts intents/ -o build/
+```
+
+Output (one file per product in `build/contracts/`):
+
+```yaml
+dataContractSpecification: 0.9.3
+id: "urn:dataproduct:revenue_analytics"
+info:
+  title: Revenue Analytics
+  version: 1.0.0
+  owner: analytics-engineering
+  domain: finance
+schema:
+  - name: total_revenue
+    type: metric
+    metric_type: simple
+  - name: metric_time__month
+    type: dimension
+quality:
+  - type: freshness
+    operator: "<"
+    value: "24h"
+slos:
+  - name: availability
+    target: "99.9%"
+```
+
+### Target 6: Product Catalog
+
+All products compile to a unified catalog JSON for discovery and governance:
+
+```bash
+intent-compile --target catalog intents/ -o build/
+```
+
+### Target 7: Product dbt Models
+
+Products with an `output.table` compile to dbt SQL models that materialize the
+product as a governed table:
+
+```bash
+intent-compile --target product-models intents/ -o models/products/
+```
+
+### Target 8: Documentation
 
 Generates human-readable documentation from the intent definitions.
 
@@ -349,6 +587,11 @@ The compiler enforces:
 5. **Document references must point to existing files** — broken links are flagged
 6. **No duplicate metric or intent names** — names are unique identifiers
 7. **At most one `default` intent** — used as the fallback when the LLM can't match
+8. **Product metric references must exist** — products can only expose defined metrics
+9. **Product intent references must exist** — products can only answer defined intents
+10. **Product dependencies must exist** — `depends on` must reference a defined product
+11. **No circular product dependencies** — A → B → A is rejected
+12. **Product tier must be valid** — must be `bronze`, `silver`, or `gold`
 
 ---
 
@@ -523,4 +766,69 @@ group "Product & Sales"
   includes
     "What's selling?"
     "Who are our best customers?"
+
+# ── Data Products ───────────────────────────────────
+
+product "Revenue Analytics"
+  description "Core revenue metrics and trends for the finance domain"
+  owner analytics-engineering
+  domain finance
+  tier gold
+
+  metrics
+    total_revenue
+    avg_order_value
+    cumulative_revenue
+    trailing_7d_revenue
+
+  intents
+    "How is the business doing?"
+    "How is revenue trending?"
+
+  contract
+    freshness < 24h
+    completeness > 99%
+    uniqueness order_id
+
+  slo
+    availability 99.9%
+    query_latency < 5s
+
+  output
+    table dp_revenue_analytics
+    formats csv, parquet, json_api
+    schedule daily 06:00 UTC
+
+  tags finance, executive, kpi
+
+product "Order Operations"
+  description "Operational metrics for fulfillment and returns management"
+  owner operations-team
+  domain operations
+  tier silver
+
+  metrics
+    total_order_count
+    total_completed_orders
+    total_returned_orders
+    order_return_rate
+
+  intents
+    "What's our return problem?"
+    "How does each region perform?"
+
+  contract
+    freshness < 6h
+    completeness > 99.5%
+
+  slo
+    availability 99.5%
+    query_latency < 3s
+
+  output
+    table dp_order_operations
+    formats csv, parquet
+    schedule hourly
+
+  tags operations, fulfillment, returns
 ```

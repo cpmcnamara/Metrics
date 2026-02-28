@@ -172,3 +172,98 @@ group "Product & Sales"
   includes
     "What's selling?"
     "Who are our best customers?"
+
+# ── Data Products ───────────────────────────────────
+
+product "Revenue Analytics"
+  description "Core revenue metrics and trends for the finance domain"
+  owner analytics-engineering
+  domain finance
+  tier gold
+
+  metrics
+    total_revenue
+    avg_order_value
+    cumulative_revenue
+    trailing_7d_revenue
+
+  intents
+    "How is the business doing?"
+    "How is revenue trending?"
+
+  contract
+    freshness < 24h
+    completeness > 99%
+    uniqueness order_id
+
+  slo
+    availability 99.9%
+    query_latency < 5s
+
+  output
+    table dp_revenue_analytics
+    formats csv, parquet, json_api
+    schedule daily 06:00 UTC
+
+  tags finance, executive, kpi
+
+product "Order Operations"
+  description "Operational metrics for fulfillment and returns management"
+  owner operations-team
+  domain operations
+  tier silver
+
+  metrics
+    total_order_count
+    total_completed_orders
+    total_returned_orders
+    order_return_rate
+
+  intents
+    "What's our return problem?"
+    "How does each region perform?"
+
+  contract
+    freshness < 6h
+    completeness > 99.5%
+
+  slo
+    availability 99.5%
+    query_latency < 3s
+
+  output
+    table dp_order_operations
+    formats csv, parquet
+    schedule hourly
+
+  tags operations, fulfillment, returns
+
+product "Product Intelligence"
+  description "Product and category performance for merchandising decisions"
+  owner product-analytics
+  domain product
+  tier silver
+  depends on "Revenue Analytics"
+
+  metrics
+    total_items_sold
+    revenue_per_item
+
+  intents
+    "What's selling?"
+    "Who are our best customers?"
+
+  contract
+    freshness < 24h
+    completeness > 98%
+
+  slo
+    availability 99.0%
+    query_latency < 5s
+
+  output
+    table dp_product_intelligence
+    formats csv, parquet, json_api
+    schedule daily 08:00 UTC
+
+  tags product, merchandising, category
