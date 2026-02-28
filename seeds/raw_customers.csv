@@ -1,0 +1,11 @@
+customer_id,first_name,last_name,email,created_at,region
+1,Alice,Johnson,alice@example.com,2024-01-15,us_west
+2,Bob,Smith,bob@example.com,2024-02-20,us_east
+3,Carol,Williams,carol@example.com,2024-03-10,us_west
+4,David,Brown,david@example.com,2024-04-05,eu_west
+5,Eva,Davis,eva@example.com,2024-05-12,eu_west
+6,Frank,Miller,frank@example.com,2024-06-18,us_east
+7,Grace,Wilson,grace@example.com,2024-07-22,us_west
+8,Henry,Moore,henry@example.com,2024-08-30,eu_west
+9,Iris,Taylor,iris@example.com,2024-09-14,us_east
+10,Jack,Anderson,jack@example.com,2024-10-01,us_west

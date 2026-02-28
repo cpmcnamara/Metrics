@@ -1,0 +1,26 @@
+name: 'metrics_testing'
+version: '1.0.0'
+
+profile: 'metrics_testing'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+seeds:
+  metrics_testing:
+    +schema: main
+
+models:
+  metrics_testing:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

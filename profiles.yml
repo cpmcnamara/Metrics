@@ -1,0 +1,7 @@
+metrics_testing:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "target/metrics_testing.duckdb"
+      threads: 4

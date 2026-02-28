@@ -1,0 +1,7 @@
+product_id,product_name,category,unit_price
+101,Widget A,widgets,25.00
+102,Widget B,widgets,35.00
+103,Gadget X,gadgets,75.00
+104,Gadget Y,gadgets,120.00
+105,Gizmo Z,gizmos,50.00
+106,Gizmo W,gizmos,45.00

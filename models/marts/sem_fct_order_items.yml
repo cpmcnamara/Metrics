@@ -1,0 +1,50 @@
+semantic_models:
+  - name: order_items
+    description: "Order line item detail with product and customer dimensions"
+    defaults:
+      agg_time_dimension: order_date
+    model: ref('fct_order_items')
+
+    entities:
+      - name: order_item_id
+        type: primary
+      - name: order_id
+        type: foreign
+      - name: product_id
+        type: foreign
+      - name: customer_id
+        type: foreign
+
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: order_status
+        type: categorical
+      - name: product_name
+        type: categorical
+      - name: product_category
+        type: categorical
+      - name: customer_name
+        type: categorical
+      - name: customer_region
+        type: categorical
+
+    measures:
+      - name: item_revenue
+        description: "Revenue at line-item level"
+        agg: sum
+        expr: item_total
+      - name: items_sold
+        description: "Total quantity of items sold"
+        agg: sum
+        expr: quantity
+      - name: avg_item_price
+        description: "Average price per item"
+        agg: average
+        expr: unit_price
+      - name: order_item_count
+        description: "Count of order line items"
+        agg: count
+        expr: order_item_id

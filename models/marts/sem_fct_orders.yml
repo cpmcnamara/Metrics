@@ -1,0 +1,58 @@
+semantic_models:
+  - name: orders
+    description: "Order-level fact table with revenue and status"
+    defaults:
+      agg_time_dimension: order_date
+    model: ref('fct_orders')
+
+    entities:
+      - name: order_id
+        type: primary
+      - name: customer_id
+        type: foreign
+
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: order_status
+        type: categorical
+      - name: customer_region
+        type: categorical
+      - name: customer_name
+        type: categorical
+
+    measures:
+      - name: order_count
+        description: "Total number of orders"
+        agg: count
+        expr: order_id
+      - name: order_revenue
+        description: "Total revenue from orders"
+        agg: sum
+        expr: order_total
+      - name: average_order_value
+        description: "Average order value"
+        agg: average
+        expr: order_total
+      - name: total_items_sold
+        description: "Total quantity of items across all orders"
+        agg: sum
+        expr: total_items
+      - name: completed_orders
+        description: "Count of completed orders"
+        agg: sum
+        expr: is_completed_order
+      - name: returned_orders
+        description: "Count of returned orders"
+        agg: sum
+        expr: is_returned_order
+      - name: max_order_value
+        description: "Maximum single order value"
+        agg: max
+        expr: order_total
+      - name: min_order_value
+        description: "Minimum single order value"
+        agg: min
+        expr: order_total

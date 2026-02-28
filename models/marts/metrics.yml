@@ -1,0 +1,85 @@
+metrics:
+
+  # ── Simple metrics (directly reference a measure) ──────────────────────
+
+  - name: total_revenue
+    description: "Total revenue across all orders"
+    type: simple
+    label: "Total Revenue"
+    type_params:
+      measure: order_revenue
+
+  - name: total_order_count
+    description: "Total number of orders placed"
+    type: simple
+    label: "Total Orders"
+    type_params:
+      measure: order_count
+
+  - name: avg_order_value
+    description: "Average value per order"
+    type: simple
+    label: "Average Order Value"
+    type_params:
+      measure: average_order_value
+
+  - name: total_items_sold
+    description: "Total quantity of items sold"
+    type: simple
+    label: "Total Items Sold"
+    type_params:
+      measure: items_sold
+
+  - name: total_completed_orders
+    description: "Number of orders that were completed"
+    type: simple
+    label: "Completed Orders"
+    type_params:
+      measure: completed_orders
+
+  - name: total_returned_orders
+    description: "Number of orders that were returned"
+    type: simple
+    label: "Returned Orders"
+    type_params:
+      measure: returned_orders
+
+  # ── Derived metrics (combine other metrics with expressions) ───────────
+
+  - name: order_return_rate
+    description: "Percentage of orders that were returned"
+    type: derived
+    label: "Return Rate"
+    type_params:
+      expr: total_returned_orders * 1.0 / total_order_count
+      metrics:
+        - name: total_returned_orders
+        - name: total_order_count
+
+  - name: revenue_per_item
+    description: "Average revenue generated per item sold"
+    type: derived
+    label: "Revenue Per Item"
+    type_params:
+      expr: total_revenue * 1.0 / total_items_sold
+      metrics:
+        - name: total_revenue
+        - name: total_items_sold
+
+  # ── Cumulative metrics (running totals over time) ──────────────────────
+
+  - name: cumulative_revenue
+    description: "Running total of revenue over all time"
+    type: cumulative
+    label: "Cumulative Revenue"
+    type_params:
+      measure: order_revenue
+
+  - name: trailing_7d_revenue
+    description: "Rolling 7-day revenue window"
+    type: cumulative
+    label: "7-Day Trailing Revenue"
+    type_params:
+      measure: order_revenue
+      cumulative_type_params:
+        window: 7 days
