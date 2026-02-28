@@ -1,0 +1,40 @@
+saved_queries:
+
+  - name: monthly_revenue_overview
+    description: "Executive-level monthly revenue with order metrics"
+    query_params:
+      metrics:
+        - total_revenue
+        - total_order_count
+        - avg_order_value
+      group_by:
+        - TimeDimension('metric_time', 'month')
+
+  - name: regional_performance
+    description: "Revenue and order volume broken down by region"
+    query_params:
+      metrics:
+        - total_revenue
+        - total_order_count
+      group_by:
+        - TimeDimension('metric_time', 'month')
+        - Dimension('order_id__customer_region')
+
+  - name: product_category_sales
+    description: "Items sold by product category over time"
+    query_params:
+      metrics:
+        - total_items_sold
+      group_by:
+        - TimeDimension('metric_time', 'month')
+        - Dimension('order_item_id__product_category')
+
+  - name: order_quality
+    description: "Return rate and completion metrics"
+    query_params:
+      metrics:
+        - order_return_rate
+        - total_completed_orders
+        - total_returned_orders
+      group_by:
+        - TimeDimension('metric_time', 'month')

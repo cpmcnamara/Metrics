@@ -1,4 +1,4 @@
-.PHONY: setup build seed run test query-all clean help
+.PHONY: setup build seed run test query-all clean help dashboard chat export
 
 ACTIVATE = . venv/bin/activate &&
 DBT = $(ACTIVATE) dbt --profiles-dir .
@@ -10,7 +10,7 @@ help: ## Show this help
 setup: ## Create venv and install dependencies
 	python3 -m venv venv
 	$(ACTIVATE) pip install --upgrade pip setuptools wheel
-	$(ACTIVATE) pip install dbt-core dbt-duckdb dbt-metricflow
+	$(ACTIVATE) pip install dbt-core dbt-duckdb dbt-metricflow streamlit plotly
 
 seed: ## Load seed data into DuckDB
 	$(DBT) seed
@@ -57,6 +57,15 @@ query-all: build ## Run all example queries
 
 validate: build ## Validate the semantic layer configuration
 	$(MF) validate-configs
+
+dashboard: build ## Launch Streamlit metrics dashboard
+	$(ACTIVATE) streamlit run apps/dashboard.py
+
+chat: build ## Launch chat-with-your-data interface
+	$(ACTIVATE) streamlit run apps/chat_with_data.py
+
+export: build ## Export revenue metrics to CSV (example)
+	$(ACTIVATE) python apps/export_metrics.py --metrics total_revenue,total_order_count --group-by metric_time__month --format csv
 
 clean: ## Remove build artifacts
 	rm -rf target/ dbt_packages/ logs/
